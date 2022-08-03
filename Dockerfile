@@ -39,7 +39,7 @@ RUN wget https://repo.anaconda.com/miniconda/Miniconda3-py37_4.12.0-Linux-x86_64
 
 # install cutadapt fastp flash megahit vsearch blat mafft seqkit blastn
 WORKDIR $software/source
-RUN $software/bin/conda-v4.12/bin/conda install -y cutadapt fastp flash megahit vsearch blat mafft seqkit blast -c bioconda
+RUN $software/bin/conda-v4.12/bin/conda install -y cutadapt fastp flash megahit vsearch blat mafft seqkit blast parallel -c bioconda
 
 # install ncbi-igblast-1.17.1
 WORKDIR $software/bin
@@ -56,6 +56,7 @@ RUN cd $software && rm -Rf BCR_v3
 WORKDIR $software/source
 RUN chown root:root -R $software/source
 RUN chown root:root -R $software/bin
+RUN chmod 644 $software/bin/BCR_analysis_v3.0
 
 # mkdir fastq directory and analysis directory
 WORKDIR /data/analysis
