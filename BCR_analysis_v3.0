@@ -154,7 +154,7 @@ function Trim_Adaptor_Seqs()
 {
     input=$1 
     adaptor=$2 
-    $bin_dir/conda/bin/cutadapt \
+    $bin_dir/conda-v4.12/bin/cutadapt \
         -m 40 -j ${thread} --error-rate 0.1 \
         -a file:"$adaptor"   \
         ${input}/${input}.paired.R1.fastq ${input}/${input}.paired.R2.fastq \
@@ -252,26 +252,26 @@ function Assemble_Seq_Megahit()
     input=$(basename $1)
     fq1=`ls $input_dir/*R1*.gz --color=never|grep "${i}"|head -1 `
     fq2=`ls $input_dir/*R2*.gz --color=never|grep "${i}"|head -1 `
-    $bin_dir/conda/bin/fastp -i $fq1 -I $fq2 -o ${input}.paired.R1.fastq -O ${input}.paired.R2.fastq --disable_adapter_trimming --thread ${thread} --report_title ${input} --length_required 30 --cut_window_size 4 --cut_mean_quality 25 --cut_tail \
+    $bin_dir/conda-v4.12/bin/fastp -i $fq1 -I $fq2 -o ${input}.paired.R1.fastq -O ${input}.paired.R2.fastq --disable_adapter_trimming --thread ${thread} --report_title ${input} --length_required 30 --cut_window_size 4 --cut_mean_quality 25 --cut_tail \
     > ${input}.runlog 2>&1
-    $bin_dir/conda/bin/flash -d Merge --max-overlap=250 -To ${input}.paired.R1.fastq ${input}.paired.R2.fastq -o ${input} --allow-outies \
+    $bin_dir/conda-v4.12/bin/flash -d Merge --max-overlap=250 -To ${input}.paired.R1.fastq ${input}.paired.R2.fastq -o ${input} --allow-outies \
     >> ${input}.runlog 2>&1
     awk '{if($5!=NULL){gsub("A","t",$5);gsub("T","a",$5);gsub("C","g",$5);gsub("G","c",$5);$5=toupper($5);base="";for(i=length($5);i>0;i--){base=base""substr($5,i,1)};$5=base;print $0}else print $0}' Merge/${input}.readsAndPairs.tab > ./${input}.readsMergedOne.tab
     awk '{if($5!=NULL){if(length($3)>length($5)){minlen=length($5)}else{minlen=length($3)};overlap=0;for(i=5;i<=10;i++){seq1start=substr($3,1,i);seq2end=substr($5,length($5)-i-9);seq1end=substr($3,length($3)-i-9);seq2start=substr($5,1,i);if(match(seq2end,seq1start)||match(seq1end,seq2start)){overlap=i}};if(overlap<=5){print $0}}else print $0}' ./${input}.readsMergedOne.tab > ${input}.readsMergedFilter.tab
     awk 'length($3)>75{if($5!=NULL){length=length($3)+length($5);if(length%3==0){$4="NNNNNN"}else {if(length%3==2){$4="NNNNNNN"}else{if(length%3==1){$4="NNNNNNNN"}}};$6=""}else{$4=""};print $1"\t"$3""$4""$5}' ${input}.readsMergedFilter.tab > ./${input}.readsMergedOne.tab
     if [ -d Megahit ];then rm -r Megahit;fi
     ######Megahit
-    $bin_dir/conda/bin/megahit -1 ${input}.paired.R1.fastq -2 ${input}.paired.R2.fastq --k-list 79,99,109,119,129 --num-cpu-threads ${thread} --out-dir Megahit --min-contig-len 70 --merge-level 10,0.97 --bubble-level 1; \
+    $bin_dir/conda-v4.12/bin/megahit -1 ${input}.paired.R1.fastq -2 ${input}.paired.R2.fastq --k-list 79,99,109,119,129 --num-cpu-threads ${thread} --out-dir Megahit --min-contig-len 70 --merge-level 10,0.97 --bubble-level 1; \
     >> ${input}.runlog 2>&1
     #####Trinity
     cat Megahit/final.contigs.fa |sed '/>/d;/A\{10,\}/d;/T\{10,\}/d;/C\{10,\}/d;/G\{10,\}/d'|awk -v name=$input '{if(length($0)<=2000){print ">"name"_"FNR"\n"$0}}' > Megahit/final.contigs.filter.fasta ;
     awk -v name=$input '{$1=name ; print ">"$1"\n"$2 }' ${input}.readsMergedOne.tab > Megahit/final.contigs.total.fa
-    $bin_dir/conda/bin/vsearch --cluster_fast Megahit/final.contigs.filter.fasta  --strand both --threads ${thread} --id 0.97 --fasta_width 0 --centroids Megahit/final.contigs.precluster.fasta  --quiet 
-    $bin_dir/conda/bin/vsearch --threads ${thread} --usearch_global Megahit/final.contigs.total.fa  --db Megahit/final.contigs.precluster.fasta --sizein --otutabout Megahit/final.contigs.unique.tab --id 0.97 --uc Megahit/final.contigs.unique.uc  --strand both  \
+    $bin_dir/conda-v4.12/bin/vsearch --cluster_fast Megahit/final.contigs.filter.fasta  --strand both --threads ${thread} --id 0.97 --fasta_width 0 --centroids Megahit/final.contigs.precluster.fasta  --quiet 
+    $bin_dir/conda-v4.12/bin/vsearch --threads ${thread} --usearch_global Megahit/final.contigs.total.fa  --db Megahit/final.contigs.precluster.fasta --sizein --otutabout Megahit/final.contigs.unique.tab --id 0.97 --uc Megahit/final.contigs.unique.uc  --strand both  \
     >> ${input}.runlog 2>&1
     cat Megahit/final.contigs.unique.tab|awk -v name=$input 'FNR>1&&FNR==NR{seq_num[$1]=$2}FNR<NR{if(seq_num[$1]!=NULL){ print $1";size="seq_num[$1]";\t"$2"\t"seq_num[$1]}}' - <(awk '/^>/{gsub(">","",$0);name=$0;next;}{print name"\t"$0}' Megahit/final.contigs.filter.fasta ) > ./${input}.unique.count
     awk '{print ">"$1"\n"$2}' ./${input}.unique.count > ${input}.unique.fasta
-    $bin_dir/conda/bin/blat $database_dir/imgtrefseq.human.fa ${input}.unique.fasta ./${input}.unique.blast -out=blast8
+    $bin_dir/conda-v4.12/bin/blat $database_dir/imgtrefseq.human.fa ${input}.unique.fasta ./${input}.unique.blast -out=blast8
     if [ `cut -f1 ${i}.unique.blast|sort|uniq -d|wc -l` -lt 1 ];then echo -e "\n          ***     There are no blast result in your input files"'!'"\n" && exit ;fi
     if [ -d ./vdj_temp ];then rm -rf ./vdj_temp ;fi ; 
     mkdir -p ./vdj_temp ; rm -f ${i}.*.Statistics
@@ -323,7 +323,7 @@ function BCR_MRD_Merge()
     echo -e "                            $i"
     fq1=`ls $input_dir/*R1.fastq.gz --color=never|grep "${i}"|head -1 `
     fq2=`ls $input_dir/*R2.fastq.gz --color=never|grep "${i}"|head -1 `
-    $bin_dir/conda/bin/fastp \
+    $bin_dir/conda-v4.12/bin/fastp \
         -i $fq1 -I $fq2 \
         -o ${i}.paired.R1.fastq -O ${i}.paired.R2.fastq \
         --thread ${thread} --report_title ${i} \
@@ -338,7 +338,7 @@ function BCR_MRD_Merge()
         cat fastp.json|grep "read1_adapter_counts"|sed 's/[^ATCG,]//g;s/,\+$//g'|awk -F',' '{for(i=1;i<=NF;i++){if(length($i)>20){print ">read1_adapter_counts_"i"\n"$i}}}' >  Merge/adapter_seq.fasta
         cat fastp.json|grep "read2_adapter_counts"|sed 's/[^ATCG,]//g;s/,\+$//g'|awk -F',' '{for(i=1;i<=NF;i++){if(length($i)>20){print ">read2_adapter_counts_"i"\n"$i}}}' >> Merge/adapter_seq.fasta
         if [ `cat Merge/adapter_seq.fasta|grep "[a-zA-Z0-9]"|wc -l` -ge 2 ];then
-            $bin_dir/conda/bin/cutadapt \
+            $bin_dir/conda-v4.12/bin/cutadapt \
                 -m 40 -j ${thread} --error-rate 0.2 \
                 -a file:Merge/adapter_seq.fasta   \
                 ${i}.paired.R1.fastq  ${i}.paired.R2.fastq \
@@ -350,7 +350,7 @@ function BCR_MRD_Merge()
     fi
     ######vsearch merge
     mkdir -p Merge
-    $bin_dir/conda/bin/vsearch \
+    $bin_dir/conda-v4.12/bin/vsearch \
         --fastq_mergepairs ${i}.paired.R1.fastq --reverse ${i}.paired.R2.fastq  --fastq_eeout \
         --fastq_allowmergestagger --threads ${thread}  --fasta_width 0 \
         --fastq_minovlen 10 --fastq_maxdiffpct 25 \
@@ -371,15 +371,15 @@ function BCR_MRD_Merge()
     sed '/A\{11,\}/d;/T\{11,\}/d;/C\{11,\}/d;/G\{11,\}/d' -i Merge/${i}.readsAndPairs.tab
     cat Merge/${i}.readsAndPairs.tab | \
         awk '{if($5!=NULL){gsub("A","t",$5);gsub("T","a",$5);gsub("C","g",$5);gsub("G","c",$5);$5=toupper($5);base="";for(i=length($5);i>0;i--){base=base""substr($5,i,1)};$5=base;print $0}else print $0}'  |\
-    $bin_dir/conda/bin/parallel --jobs ${thread} -k --linebuffer --halt soon,fail=1 -q -m --pipe \
+    $bin_dir/conda-v4.12/bin/parallel --jobs ${thread} -k --linebuffer --halt soon,fail=1 -q -m --pipe \
        awk  '{if($5!=NULL){if(length($3)>length($5)){minlen=length($5)}else{minlen=length($3)};overlap_merge=0;overlap_overhang=0;overlap_stagger=0;for(i=5;i<=30;i++){seq1start=substr($3,1,i);seq2end=substr($5,length($5)-i-5);seq1end=substr($3,length($3)-i-5);seq2start=substr($5,1,i);if(match(seq2end,seq1start)){overlap_stagger=i}else if(match(seq1end,seq2start)){overlap_merge=i}else if(match($3,substr($5,30-i,length($5)-2*(30-i)))){overlap_overhang=(length($5)-2*(30-i))};};if(overlap_stagger<=5){if(overlap_overhang>=(length($5)-20)){print $1,$2,$3,$4}else{if(overlap_merge>=5){print $1,$2,$3""substr($5,overlap_merge),$6""substr($6,overlap_merge);}else{print $0}}}}else print $0}' |\
-    $bin_dir/conda/bin/parallel --jobs ${thread} -k --linebuffer --halt soon,fail=1 -q -m --pipe \
+    $bin_dir/conda-v4.12/bin/parallel --jobs ${thread} -k --linebuffer --halt soon,fail=1 -q -m --pipe \
         awk 'length($3)>80{if($5!=NULL && length($5)>80){lengths=length($3)+length($5);if((lengths%3)==0){$4="NNNNNN"}else {if((lengths%3)==2){$4="NNNNNNN"}else{if((lengths%3)==1){$4="NNNNNNNN"}}};$6=""}else{$4=""};print $1"\t"$3""$4""$5}' \
         > Merge/${i}.readsMergedOne.tab
     ###### pre cluster for unique sequence
     awk '{a[$2]=a[$2]+1}END{for(i in a){if(a[i]>1){print a[i],i}}}' Merge/${i}.readsMergedOne.tab |\
     awk -v name=$i '{$1=name"_"FNR";size="$1";";print ">"$1"\n"$2}' > Merge/${i}.merged.fasta
-    $bin_dir/conda/bin/vsearch \
+    $bin_dir/conda-v4.12/bin/vsearch \
         --cluster_size Merge/${i}.merged.fasta --strand both --threads ${thread} --id 0.98  \
         --sizein --sizeout --fasta_width 0 --consout Merge/${i}.consensus.fasta \
         --centroids ./${i}.unique.fasta \
@@ -397,7 +397,7 @@ function BCR_Annotation_Blat()
     echo -e "                            $i"
     if [ -f IGblast/${i}.unique.fasta ]&&[ ! -f ./${i}.unique.fasta ];then mv -f IGblast/${i}.unique.{fasta,count} ./ ;fi
     ### blat
-    $bin_dir/conda/bin/blat $database_dir/imgtrefseq.human.fa ./${i}.unique.fasta ./${i}.unique.blast -out=blast8 -minIdentity=90 
+    $bin_dir/conda-v4.12/bin/blat $database_dir/imgtrefseq.human.fa ./${i}.unique.fasta ./${i}.unique.blast -out=blast8 -minIdentity=90 
     echo -e "/data/home/wanglei/miniconda3/envs/R-4.0/bin/blat $database_dir/imgtrefseq.human.fa ./${i}.unique.fasta ./${i}.unique.blast -out=blast8 -minIdentity=90" >> ${i}.runlog
     ### igblastn
     export IGDATA=$bin_dir/ncbi-igblast-1.17.1
@@ -557,7 +557,7 @@ function Find_Univector_Blastn()
         > ./${i}.unique.align.univector   #提取id及序列
     echo "qseqid sseqid pident length mismatch gapopen qstart qend sstart send evalue bitscore"|\
         sed 's/ /\t/g' > ./${i}.unique.univector.blastout
-    $bin_dir/conda/bin/blastn  \
+    $bin_dir/conda-v4.12/bin/blastn  \
         -task blastn -reward 1 -penalty -5 -gapopen 3 \
         -gapextend 3 -dust yes -soft_masking true \
         -evalue 700 -searchsp 1750000000000 \
@@ -600,15 +600,15 @@ function BCR_Represent_Seq()
                     > Align/${type}/"${type}.${h}.fa" ;
                 if [ `cat Align/${type}/"${type}.${h}.fa"|wc -l` -gt 400 ] ;then 
                     alignment='--auto'; else alignment='--localpair'; fi ;
-                $bin_dir/conda/bin/mafft \
+                $bin_dir/conda-v4.12/bin/mafft \
                     --quiet --thread -1 --maxiterate 1000 ${alignment} Align/${type}/"${type}.${h}.fa" \
                     > Align/${type}/"${type}.${h}.align" ;
-               $bin_dir/conda/bin/seqkit seq \
+               $bin_dir/conda-v4.12/bin/seqkit seq \
                     Align/${type}/"${type}.${h}.align" --upper-case -w 0 --quiet \
                     -o Align/${type}/"${type}.${h}.aligned" ;
                 TrimAlignedSeqs  Align/${type}/"${type}.${h}.aligned" ;
                 if [ -f Align/${type}/"${type}.${h}.align" ];then \rm -f Align/${type}/"${type}.${h}.align" ;fi
-                $bin_dir/conda/bin/vsearch \
+                $bin_dir/conda-v4.12/bin/vsearch \
                     --cluster_size Align/${type}/"${type}.${h}.aligned.trimed.split.fa" --quiet --qmask none \
                     --threads 2 --id 0.97 --strand both --sizein --sizeout --fasta_width 0 --quiet \
                     --uc Align/${type}/"${type}.${h}.rep_seqs.uc" --centroids Align/${type}/"${type}.${h}.rep_seqs.fna" ;
