@@ -1,0 +1,773 @@
+#!/usr/bin/bash
+set +x
+##########  script usage
+
+function help()
+{ 
+cat << HELP
+
+  USAGE: BCR_analysis_v3.0 [options] [arg]
+
+  GENERAL:
+    -h  --help                        Show the help message and exit
+
+  REQUIRED:
+    -i  --input      <path>           The directory where fastq files are saved;
+    -t  --type       <string>         The immune cell rearrangement type (BCR/TCR);
+
+  OPTIONAL:
+    -o  --output     <path>           The dafault analysis path : /data/RDProjects/RD_**
+    -e  --evalue     <number>         The igblastn E-value (BCR/TCR), if not, it defaults to BCR;
+    -f  --config     <path/string>    The configure file: path/configure.csv;
+    -a  --annotation <string>         The annotation software: blat/igblastn ,if not, it defaults to igblastn;
+
+  EXAMPLE: 
+    BCR_analysis_v3.0 -i fastq_directory -o output_directory
+
+HELP
+exit 0 
+}
+
+while [[ $# -gt 0 ]]
+     do key=$1
+        case $key in
+            -i|--input)
+                 input_dir=$2;if [ ! $2 ]; then echo -e "\nUSAGE: BCR_analysis_v3.0 [options] [arg]\n";echo -e "Use 'BCR_analysis_v3.0 -h' for help.\n" && exit 1; fi
+                 shift
+                 ;;
+            -t|--type)
+                 clone_type=$2;if [ ! $2 ]; then echo -e "\nUSAGE: BCR_analysis_v3.0 [options] [arg]\n";echo -e "Use 'BCR_analysis_v3.0 -h' for help.\n" && exit 1; fi
+                 shift
+                 ;;
+            -f|--config)
+                 config_file=$2;if [ ! $2 ]; then echo -e "\nUSAGE: BCR_analysis_v3.0 [options] [arg]\n";echo -e "Use 'BCR_analysis_v3.0 -h' for help.\n" && exit 1; fi
+                 shift
+                 ;;
+            -e|--evalue)
+                 evalue=$2;if [ ! $2 ]; then echo -e "\nUSAGE: BCR_analysis_v3.0 [options] [arg]\n";echo -e "Use 'BCR_analysis_v3.0 -h' for help.\n" && exit 1; fi
+                 shift
+                 ;;
+            -a|--annotation)
+                 annotation=$2;if [ ! $2 ]; then echo -e "\nUSAGE: BCR_analysis_v3.0 [options] [arg]\n";echo -e "Use 'BCR_analysis_v3.0 -h' for help.\n" && exit 1; fi
+                 shift
+                 ;;
+            -o|--output)
+                 analysis_dir=$2;if [ ! $2 ]; then echo -e "\nUSAGE: BCR_analysis_v3.0 [options] [arg]\n";echo -e "Use 'BCR_analysis_v3.0 -h' for help.\n" && exit 1; fi
+                 shift
+                 ;;
+            -h|--help)
+                 help
+                 exit
+                 ;;
+            *)
+                echo -e "\nUSAGE: BCR_analysis_v3.0 [options] [arg]"
+                echo -e "\nUse 'BCR_analysis_v3.0 -h/--help ' for help.\n" && exit 1
+                ;;
+        esac
+    shift
+done
+
+##########  software environment
+
+software=/yqyuhao
+Ncpu=$(lscpu|awk '/^CPU\(s\)/{print int($2)}')
+bin_dir=$software/bin
+database_dir=$software/database/MRD_Database
+igblastn_db=$software/database/igblastn_db
+
+ncpu=$(nproc)
+PWD=`pwd`
+WD=$PWD
+
+echo "Work started at" `date` >> ${input}/${input}.runlog
+##########  when exit kill background program
+trap 'kill $(jobs -p)' SIGINT > /dev/null 2>&1
+ # INT QUIT EXIT HUP KILL ALRM
+##########  Enter working directory
+if [ -n "$input_dir" ];then input_dir=`cd $WD;cd $input_dir ;pwd` ;else input_dir=`cd $WD;cd ../fastq ;pwd` ;fi
+if [ -n "$analysis_dir" ];then mkdir -p $analysis_dir;analysis_dir=`cd $PWD;cd $analysis_dir;pwd` ; else mkdir -p Analysis3.0;Analysis_dir="$PWD"/Analysis3.0 ;fi
+if [ ! -d $input_dir ];then echo -e "\nCan't find the directory of $input_dir , please check parameters: -i/--input .\n" && exit 1;fi
+if [ ! -d $analysis_dir ];then echo -e "\nCan't find the directory of $analysis_dir , please check parameters: -o/--output .\n" && exit 1;fi
+
+##########  set igblastn e-value
+if [ -n "$evalue" ];then 
+    if [ `echo "$evalue "|grep -c "[^\.0-9Ee\-\ ]"` -eq 0 ];then evalues=" -evalue $evalue " ;
+    else echo -e "\n          ***     It's not a standard number, please check parameters: -e/--evalue $evalue (suggest 0.1~0).\n" && exit 1;fi
+else evalues=" -evalue 0.1 " ;evalue="0.1" ;
+fi
+
+##########  check clone type
+if [ ! -n "$clone_type" ];then clone_type="BCR"
+else typeset -u clone_type="$clone_type" ;
+    if [ "$clone_type" == "BCR" -o "$clone_type" == "IG" ];then clone_type="BCR" ;
+    elif [ "$clone_type" == "TCR" ];then clone_type="TCR" ;
+    else clone_type="BCR"
+    fi
+fi
+
+##########  check annotation softwqre
+if [ -z "$annotation" ];then annotation="igblastn"
+else typeset -l annotation="$annotation" ;
+    if [ "$annotation" == "igblastn" -o "$annotation" == "igblast" ];then annotation="igblastn" ;
+    elif [ "$annotation" == "blat" ];then annotation="blat" ;
+    else annotation="igblastn"
+    fi
+fi
+
+##########  remove config file empty lines
+if [ -n "$config_file" ];then 
+    config_file=`cd $WD;cd $(dirname $config_file);pwd`/$(basename $config_file) ;
+    cp $config_file $config_file".txt"
+    config_file=$(dirname $config_file)/$(basename $config_file)".txt"
+    if [ ! -f $config_file ];then echo -e "\n          ***     Can't find the file of $config_file , please check parameters: -f/--config .\n" && exit 1;fi
+    dos2unix $config_file
+fi
+
+##########  set thread number
+if [ -z "$config_file" ];then 
+    sample_num=$( ls $input_dir/*.gz|grep "R1"|wc -l )
+else sample_num=$( cat $config_file|wc -l )
+fi
+if [ $sample_num -ge 1 ] ;then 
+    thread=$[$ncpu/$sample_num]
+    if [ "$thread" -le 1 ];then thread=2 ; fi
+else echo -e '          [ERROR] Could not find fastq file !' && exit 1 ;
+fi
+
+##########  check sample name and number
+if [ -n "$config_file" ];then
+    for i in `cat $config_file|cut -d',' -f1 |sort|uniq`;do
+        if [ `find $input_dir -name "*fastq.gz" |grep "$i"|wc -l` -ne 2 ];then echo -e "\n          ***     Can not find the fastq file with the config.csv, please check your data path.\n" && exit 1;fi
+    done
+fi
+
+cd $analysis_dir
+
+echo "
+###################################################################################################
+##################################      Analysis Start       ######################################
+###################################################################################################
+"
+##########  Main function
+declare -a Trim_Adaptor_Seqs
+function Trim_Adaptor_Seqs()
+{
+    input=$1 
+    adaptor=$2 
+    $bin_dir/conda/bin/cutadapt \
+        -m 40 -j ${thread} --error-rate 0.1 \
+        -a file:"$adaptor"   \
+        ${input}/${input}.paired.R1.fastq ${input}/${input}.paired.R2.fastq \
+        -o ${input}/${input}.trimadapt3.R1.fastq -p ${input}/${input}.trimadapt3.R2.fastq \
+    >> ${input}/${input}.runlog 2>&1
+
+}
+export -f Trim_Adaptor_Seqs
+declare -a MRDBlastStatistics
+function MRDBlastStatistics()
+{
+    input=$1 
+    i=`echo "$2"|sed 's/_size=/;size=/'`
+    if [ ! -f ${input}.unique.blast ];then exit 1;fi
+    #加载${input}.unique.blast文件进行文本处理
+    blast_result=`cat ${input}.unique.blast|grep -F "$i"`
+    low_evalue=`echo "$blast_result"|awk 'BEGIN{FS=OFS="\t";min=20}$NF!="D"{if($11+0 < min+0){min=$11}}END{if(min<=0.0001){printf 0}else{printf 1}}'`
+    VDJ_num=`echo "$blast_result"|cut -f2|sed 's/[[:digit:]].*//g;s/\*.*//g'|sort|uniq|wc -l`
+    type_num=`echo "$blast_result"|cut -f2|sed 's/[[:digit:]].*//g'|cut -c 1-3|sed '/^KDE/d'|sort|uniq|wc -l`
+    if [ $VDJ_num -ge 2 ]&&[ $low_evalue -eq 0 ] ;then 
+        cat ${input}.unique.blast|grep -F "$i" >> IGblast/vdj_filtered/vdj_blast.result
+        seqcount=`cat ${input}.unique.count|grep -P "$i\t"|tr '\t' ' '|head -1`; 
+        sequence=`echo $seqcount|cut -f2 -d' '` ;  
+        seq_numb=`echo $seqcount|cut -f3 -d' '` ;
+        seq_leng=`echo $sequence|awk '{print length($0)}'`
+        if [ `echo -e "$blast_result"|grep "[a-zA-Z0-9]"|wc -l` -ge 2 ] ;then
+            vdj_type="" ;vdj_temp="" ;
+            for j in `echo -e "$blast_result"|cut -f2|sed 's/[[:digit:]].*//g;s/\*.*//g'|sort|uniq`;do
+                if [ `echo -e "$blast_result"|grep -P "\t$j"|wc -l` -eq 1 ];then 
+                    vdj_temp=`echo -e "$blast_result"|grep -P "\t$j"|awk '{FS=OFS="\t";print $1,$2,$12,$4,$3}'`
+                    vdj_type=`echo -e "$vdj_type\n$vdj_temp"`
+                else 
+                    typevdj="";topvdj="";countvdj="";blast_index="";blast_maxscore="";blast_maxlen="";blast_maxsame="";blast_num=""
+                    blast_index=`echo -e "$blast_result"|grep -P "\t$j"| awk -F '\t' '{types[FNR]=$2;len[FNR]=$4;same[FNR]=$3;score[FNR]=$12;}END{OFS="\t";maxlen=0;maxsame=0;maxscore=0;for(i=1;i<=NR;i++){if(score[i]>maxscore){maxlen=len[i];typevdj=types[i];maxsame=same[i];maxscore=score[i];}else{if(score[i]==maxscore){if(len[i]>maxlen){maxsame=same[i];typevdj=types[i];maxlen=len[i];}else{if(len[i]==maxlen){if(same[i]>maxsame){maxsame=same[i];typevdj=types[i]}}}}}};print $1,typevdj,maxscore,maxlen,maxsame}' `
+                    blast_maxscore=`echo $blast_index|cut -f3 -d' '`;blast_maxlen=`echo $blast_index|cut -f4 -d' '`;blast_maxsame=`echo $blast_index|cut -f5 -d' '`;
+                    blast_best=`echo -e "$blast_result"|grep -P "\t$j"|grep -P "\t$blast_maxscore[^a-zA-Z]?"|grep -P "\t$blast_maxlen\t"|grep -P "\t$blast_maxsame\t"`
+                    if [ `echo -e "$blast_best"|grep "[a-zA-Z0-9]"|wc -l` -eq 1 ];then 
+                        vdj_temp=`echo $blast_index |tr " " "\t" `
+                        vdj_type=`echo -e "$vdj_type\n$vdj_temp"`
+                    elif [ `echo -e "$blast_best"|grep "[a-zA-Z0-9]"|wc -l` -gt 1 ];then 
+                        countvdj=`echo -e "$blast_best"|cut -f2|sed 's/\*.*//g'|sort|uniq -c|sed 's/^ \+//g'|sort -nr|head -1`
+                        if [ `echo $countvdj|sed 's/ .*//g'` -gt 1 ] ;then 
+                            typevdj=`echo $countvdj|sed 's/.* //g'`"*00"
+                            vdj_temp=`echo "$i $typevdj $blast_maxscore $blast_maxlen $blast_maxsame" |tr " " "\t"`
+                            vdj_type=`echo -e "$vdj_type\n$vdj_temp"`
+                        else topvdj=`echo $countvdj|sed 's/.* //g'`
+                            typevdj=`echo -e "$blast_best"|grep -P "${topvdj}"|head -1 |awk '{FS="\t";OFS="\t";print $1,$2,$12,$4,$3}'`
+                            vdj_temp=`echo $typevdj |tr " " "\t"`
+                            vdj_type=`echo -e "$vdj_type\n$vdj_temp"`
+                        fi
+                    fi
+                fi
+            done
+            echo -e "$vdj_type" >> IGblast/vdj_filtered/vdj_blast.type
+            vj_group=`echo -e "$vdj_type"|cut -f2|tr '\n' ' '`
+            count=0 ;typeV="";typeJ="";typeVJ="";
+            if [ `echo $vj_group|grep -e "IGKV" |grep -e "KDE" -e "IGKJ" |wc -l` -ge 1 ];then 
+                typeJ=`echo -e "$vdj_type"|grep -e "KDE" -e "IGK"|grep -v -e "IGKV"| \
+                    awk -F '\t' '{types[FNR]=$2;score[FNR]=$3;len[FNR]=$4;same[FNR]=$5;}END{OFS="\t";maxlen=0;maxsame=0;maxscore=0;for(i=1;i<=NR;i++){if(score[i]>maxscore){maxlen=len[i];typevdj=types[i];maxsame=same[i];maxscore=score[i];}else{if(score[i]==maxscore){if(len[i]>maxlen){maxsame=same[i];typevdj=types[i];maxlen=len[i];}else{if(len[i]==maxlen){if(same[i]>maxsame){maxsame=same[i];typevdj=types[i]}}}}}};print typevdj}' `
+                typeV=`echo -e "$vdj_type"|cut -f2|grep -e "IGKV"|head -1` ;
+                typeVJ="IGK" ; count=$[$count+1] ;
+            fi
+            for k in "IGH" "IGL" "TRA" "TRB" "TRG" "TRD";do
+                if [ `echo $vj_group|grep -e "${k}V" |grep -e "${k}J"|wc -l` -eq 1 ];then 
+                    typeV=`echo -e "$vdj_type"|cut -f2|grep -e "${k}V"|head -1` ;
+                    typeJ=`echo -e "$vdj_type"|cut -f2|grep -e "${k}J"|head -1` ;
+                    typeVJ=${k} ;count=$[$count+1] ;
+                elif [ `echo $vj_group|grep -e "TRAV" |grep -e "TRDJ"|wc -l` -eq 1 ];then 
+                    typeV=`echo -e "$vdj_type"|cut -f2|grep -e "TRAV"|head -1` ;
+                    typeJ=`echo -e "$vdj_type"|cut -f2|grep -e "TRDJ"|head -1` ;
+                    typeVJ=TRA ;count=$[$count+1] ;
+                elif [ `echo $vj_group|grep -e "TRDV" |grep -e "TRAJ"|wc -l` -eq 1 ];then 
+                    typeV=`echo -e "$vdj_type"|cut -f2|grep -e "TRDV"|head -1` ;
+                    typeJ=`echo -e "$vdj_type"|cut -f2|grep -e "TRAJ"|head -1` ;
+                    typeVJ=TRD ;count=$[$count+1] ;
+                fi
+                
+                if [ $count -eq 0 ]&&[ `echo $vj_group|grep -e "${k}D"|grep -e "${k}J"|wc -l` -eq 1 ];then
+                    typeV=`echo -e "$vdj_type"|cut -f2|grep -e "${k}D"|head -1` ;
+                    typeJ=`echo -e "$vdj_type"|cut -f2|grep -e "${k}J"|head -1` ;
+                    typeVJ=${k}'D' ;count=$[$count+1] ;
+                fi
+            done
+            if [ $count -eq 1 ];then 
+                echo -e ${i}"\t"$sequence"\t"$seq_leng"\t"$seq_numb"\t"$typeV"\t"$typeJ"\t"$typeV"_"$typeJ >> ${input}.$typeVJ.Statistics ;
+            else echo -e "\n[Warnning] There are no available type(V-D-J/V-J/D-J/V-KDE...) in this sequence"'!   '"${i}\t$vdj_type\n"   >> ${input}.runlog
+            fi
+        fi ;
+    fi ;
+    i=${input}
+}
+export -f MRDBlastStatistics
+function Assemble_Seq_Megahit()
+{
+    input=$(basename $1)
+    fq1=`ls $input_dir/*R1*.gz --color=never|grep "${i}"|head -1 `
+    fq2=`ls $input_dir/*R2*.gz --color=never|grep "${i}"|head -1 `
+    $bin_dir/conda/bin/fastp -i $fq1 -I $fq2 -o ${input}.paired.R1.fastq -O ${input}.paired.R2.fastq --disable_adapter_trimming --thread ${thread} --report_title ${input} --length_required 30 --cut_window_size 4 --cut_mean_quality 25 --cut_tail \
+    > ${input}.runlog 2>&1
+    $bin_dir/conda/bin/flash -d Merge --max-overlap=250 -To ${input}.paired.R1.fastq ${input}.paired.R2.fastq -o ${input} --allow-outies \
+    >> ${input}.runlog 2>&1
+    awk '{if($5!=NULL){gsub("A","t",$5);gsub("T","a",$5);gsub("C","g",$5);gsub("G","c",$5);$5=toupper($5);base="";for(i=length($5);i>0;i--){base=base""substr($5,i,1)};$5=base;print $0}else print $0}' Merge/${input}.readsAndPairs.tab > ./${input}.readsMergedOne.tab
+    awk '{if($5!=NULL){if(length($3)>length($5)){minlen=length($5)}else{minlen=length($3)};overlap=0;for(i=5;i<=10;i++){seq1start=substr($3,1,i);seq2end=substr($5,length($5)-i-9);seq1end=substr($3,length($3)-i-9);seq2start=substr($5,1,i);if(match(seq2end,seq1start)||match(seq1end,seq2start)){overlap=i}};if(overlap<=5){print $0}}else print $0}' ./${input}.readsMergedOne.tab > ${input}.readsMergedFilter.tab
+    awk 'length($3)>75{if($5!=NULL){length=length($3)+length($5);if(length%3==0){$4="NNNNNN"}else {if(length%3==2){$4="NNNNNNN"}else{if(length%3==1){$4="NNNNNNNN"}}};$6=""}else{$4=""};print $1"\t"$3""$4""$5}' ${input}.readsMergedFilter.tab > ./${input}.readsMergedOne.tab
+    if [ -d Megahit ];then rm -r Megahit;fi
+    ######Megahit
+    $bin_dir/conda/bin/megahit -1 ${input}.paired.R1.fastq -2 ${input}.paired.R2.fastq --k-list 79,99,109,119,129 --num-cpu-threads ${thread} --out-dir Megahit --min-contig-len 70 --merge-level 10,0.97 --bubble-level 1; \
+    >> ${input}.runlog 2>&1
+    #####Trinity
+    cat Megahit/final.contigs.fa |sed '/>/d;/A\{10,\}/d;/T\{10,\}/d;/C\{10,\}/d;/G\{10,\}/d'|awk -v name=$input '{if(length($0)<=2000){print ">"name"_"FNR"\n"$0}}' > Megahit/final.contigs.filter.fasta ;
+    awk -v name=$input '{$1=name ; print ">"$1"\n"$2 }' ${input}.readsMergedOne.tab > Megahit/final.contigs.total.fa
+    $bin_dir/conda/bin/vsearch --cluster_fast Megahit/final.contigs.filter.fasta  --strand both --threads ${thread} --id 0.97 --fasta_width 0 --centroids Megahit/final.contigs.precluster.fasta  --quiet 
+    $bin_dir/conda/bin/vsearch --threads ${thread} --usearch_global Megahit/final.contigs.total.fa  --db Megahit/final.contigs.precluster.fasta --sizein --otutabout Megahit/final.contigs.unique.tab --id 0.97 --uc Megahit/final.contigs.unique.uc  --strand both  \
+    >> ${input}.runlog 2>&1
+    cat Megahit/final.contigs.unique.tab|awk -v name=$input 'FNR>1&&FNR==NR{seq_num[$1]=$2}FNR<NR{if(seq_num[$1]!=NULL){ print $1";size="seq_num[$1]";\t"$2"\t"seq_num[$1]}}' - <(awk '/^>/{gsub(">","",$0);name=$0;next;}{print name"\t"$0}' Megahit/final.contigs.filter.fasta ) > ./${input}.unique.count
+    awk '{print ">"$1"\n"$2}' ./${input}.unique.count > ${input}.unique.fasta
+    $bin_dir/conda/bin/blat $database_dir/imgtrefseq.human.fa ${input}.unique.fasta ./${input}.unique.blast -out=blast8
+    if [ `cut -f1 ${i}.unique.blast|sort|uniq -d|wc -l` -lt 1 ];then echo -e "\n          ***     There are no blast result in your input files"'!'"\n" && exit ;fi
+    if [ -d ./vdj_temp ];then rm -rf ./vdj_temp ;fi ; 
+    mkdir -p ./vdj_temp ; rm -f ${i}.*.Statistics
+    cat ${i}.unique.blast|awk '$11<=1{print $0}'|cut -f1|sort|uniq -d|sed -e 's/;size=/_size=/g'| \
+        xargs -i -r -P ${thread} bash -c " MRDBlastStatistics ${i} {} "
+    sed -i 's/\tIGKJ0\*KDE\t/\tKDE\t/g;s/_IGKJ0\*KDE[^a-zA-Z]\?/_KDE/g' *.Statistics
+    if [ $? -eq 0 ]&&[ -d ./vdj_temp ];then rm -r ./vdj_temp ;fi
+    title="Read_No\tSequences\tSeq_Len\tCount\tV_Gene\tJ_Gene\tVJ_Gene"
+    for n in `ls ${input}.*.Statistics --color=never`;do
+        cat ${n}|sort -k 4nr -t $'\t'| sed "1s/^/$title\n/" > ${n}.sorted.xls ;
+        echo -e "          ***     ${n}.sorted.xls Completed\n"
+    done
+    mkdir -p IGblast
+    mv -f *Statistics *sorted.xls *.unique.* IGblast
+    sed -i 's/\//|/g' IGblast/*
+}
+function TrimAlignedSeqs()
+{
+    input="$1" 
+    if [ -f "$input" ]&&[ `cat "$input"|grep "^>"|wc -l` -ge 1 ];then
+        temp_index=`awk '/^>/{name=$0;next;}{start=0;for(i=1;i<=length($0);i++){if(substr($0,i,1)=="-"){start=start+1}else{break}};end=0;for(j=1;j<=length($0);j++){if(substr($0,length($0)-j+1,1)=="-"){end=end+1}else{break}};print name"\t"start"\t"end"\t"length($0)}' "$input" ` 
+        start=`echo -e "$temp_index"|cut -f2|sort -nr|head -1`
+        end=`echo -e "$temp_index"|cut -f3|sort -nr|head -1`
+    else echo -e "\n          ***     Can't find input file: $input .\n" && continue ;
+    fi
+    if [ "$start" -ge 36 ];then start=36 ;else start=0 ;fi
+    if [ "$end"  -ge 36 ];then end=36 ;else end=0 ;fi
+    trimed_fa=`awk -v start=$start -v end=$end '/^>/{name=$0;next;}{trimseq=substr($0,start);trimseq=substr(trimseq,1,length(trimseq)-end);print name"\n"trimseq}' $input ` 
+    total_seq=`echo -e "trimed_fa"|grep ">"|wc -l`
+    if [ $total_seq -gt 2 ];then 
+        if [ $total_seq -lt 5 ];then cut=$[total_seq-1] ;
+        elif [ $total_seq -lt 25 ];then cut=$[$total_seq*75/100] ;
+        elif [ $total_seq -lt 100 ];then cut=$[$total_seq*80/100] ;
+        else cut=$[$total_seq*85/100] ;
+        fi
+        trimed_local=`echo -e "$trimed_fa"|sed '/^>/d'|awk '{for(i=1;i<=length($0);i++){if(substr($0,i,1)=="-"){a[i]=a[i]+1}else{a[i]=a[i]+0}}}END{for(j=1;j<=length($0);j++){print j"\t"a[j]}}'|awk -v cut=$cut '{if($2>=cut){print $1"\t"$2}}'` 
+        if [ `echo -e "$trimed_local"|wc -l` -ge 1 ] ;then 
+            echo -e "$trimed_local" |awk 'FNR==NR{b[$1]=$1}FNR<NR{if(FNR%2==1){print $0}else{split($0,c,"");for(k in b){c[k]="-"};seq="";for(k=1;k<length($0);k++){seq=seq""c[k]};print seq}}' - <(echo -e "$trimed_fa") > $input".trimed.split.fa" ;
+        else echo -e "$trimed_fa" > $input".trimed.split.fa" ;
+        fi
+    else echo -e "$trimed_fa" > $input".trimed.split.fa" ;
+    fi
+    sed '2~2s/^\-\+//g;2~2s/\-\+$//g;2~2s/^[ATCG]\{1,4\}\-\{1,\}//g;2~2s/\-\{1,\}[ATCG]\{1,4\}$//g;2~2s/\-//g;2~2s/N//g' -i $input".trimed.split.fa"
+}
+function BCR_MRD_Merge()
+{
+    i=`basename $1`
+    echo -e "\n          Start Sequence Assembly  ... \n"
+    echo -e "                            $i"
+    fq1=`ls $input_dir/*R1.fastq.gz --color=never|grep "${i}"|head -1 `
+    fq2=`ls $input_dir/*R2.fastq.gz --color=never|grep "${i}"|head -1 `
+    $bin_dir/conda/bin/fastp \
+        -i $fq1 -I $fq2 \
+        -o ${i}.paired.R1.fastq -O ${i}.paired.R2.fastq \
+        --thread ${thread} --report_title ${i} \
+        --length_required 40 --cut_window_size 4 \
+        --cut_mean_quality 20 --cut_tail \
+        --trim_poly_x --poly_x_min_len 12 \
+        >>${i}.runlog 2>&1
+    
+    ######filter adapter again
+    mkdir -p Merge
+    if [ -f "fastp.json" ];then
+        cat fastp.json|grep "read1_adapter_counts"|sed 's/[^ATCG,]//g;s/,\+$//g'|awk -F',' '{for(i=1;i<=NF;i++){if(length($i)>20){print ">read1_adapter_counts_"i"\n"$i}}}' >  Merge/adapter_seq.fasta
+        cat fastp.json|grep "read2_adapter_counts"|sed 's/[^ATCG,]//g;s/,\+$//g'|awk -F',' '{for(i=1;i<=NF;i++){if(length($i)>20){print ">read2_adapter_counts_"i"\n"$i}}}' >> Merge/adapter_seq.fasta
+        if [ `cat Merge/adapter_seq.fasta|grep "[a-zA-Z0-9]"|wc -l` -ge 2 ];then
+            $bin_dir/conda/bin/cutadapt \
+                -m 40 -j ${thread} --error-rate 0.2 \
+                -a file:Merge/adapter_seq.fasta   \
+                ${i}.paired.R1.fastq  ${i}.paired.R2.fastq \
+                -o ./Merge/${i}.trim3.R1.fastq -p ./Merge/${i}.trim3.R2.fastq \
+            >>${i}.runlog 2>&1
+            mv ./Merge/${i}.trim3.R1.fastq  ${i}.paired.R1.fastq
+            mv ./Merge/${i}.trim3.R2.fastq  ${i}.paired.R2.fastq
+        fi
+    fi
+    ######vsearch merge
+    mkdir -p Merge
+    $bin_dir/conda/bin/vsearch \
+        --fastq_mergepairs ${i}.paired.R1.fastq --reverse ${i}.paired.R2.fastq  --fastq_eeout \
+        --fastq_allowmergestagger --threads ${thread}  --fasta_width 0 \
+        --fastq_minovlen 10 --fastq_maxdiffpct 25 \
+        --fastqout_notmerged_rev Merge/${i}.readsNotMerged_Rev.fastq \
+        --fastqout_notmerged_fwd Merge/${i}.readsNotMerged_Fwd.fastq \
+        --fastaout Merge/${i}.readsAndPairs.fasta \
+        >>${i}.runlog 2>&1
+    grep -F -e "[FLASH] " ${i}.runlog |grep -F -v "[FLASH] Processed " > Merge/${i}.merged.log
+    grep -A 24 "^Merging reads " ${i}.runlog >> Merge/${i}.merged.log
+    cat Merge/${i}.readsAndPairs.fasta |\
+        awk 'FNR%2==1{gsub(/^>/,"",$0);name=$0;next;}{if(length($0)>80){print name,$0 ;name=""}}' \
+        > Merge/${i}.readsAndPairs.tab
+    cat Merge/${i}.readsNotMerged_Fwd.fastq | paste - - - - |awk '{print $1,$2,$3,$5}'|\
+        awk 'FNR==NR{rwd[$1]=$0}FNR<NR{print rwd[$1],$2,$3}' - <(cat Merge/${i}.readsNotMerged_Rev.fastq|\
+        paste - - - -|awk '{print $1,$3,$5}') \
+        >> Merge/${i}.readsAndPairs.tab
+    ######merge combination sequence
+    sed '/A\{11,\}/d;/T\{11,\}/d;/C\{11,\}/d;/G\{11,\}/d' -i Merge/${i}.readsAndPairs.tab
+    cat Merge/${i}.readsAndPairs.tab | \
+        awk '{if($5!=NULL){gsub("A","t",$5);gsub("T","a",$5);gsub("C","g",$5);gsub("G","c",$5);$5=toupper($5);base="";for(i=length($5);i>0;i--){base=base""substr($5,i,1)};$5=base;print $0}else print $0}'  |\
+    $bin_dir/conda/bin/parallel --jobs ${thread} -k --linebuffer --halt soon,fail=1 -q -m --pipe \
+       awk  '{if($5!=NULL){if(length($3)>length($5)){minlen=length($5)}else{minlen=length($3)};overlap_merge=0;overlap_overhang=0;overlap_stagger=0;for(i=5;i<=30;i++){seq1start=substr($3,1,i);seq2end=substr($5,length($5)-i-5);seq1end=substr($3,length($3)-i-5);seq2start=substr($5,1,i);if(match(seq2end,seq1start)){overlap_stagger=i}else if(match(seq1end,seq2start)){overlap_merge=i}else if(match($3,substr($5,30-i,length($5)-2*(30-i)))){overlap_overhang=(length($5)-2*(30-i))};};if(overlap_stagger<=5){if(overlap_overhang>=(length($5)-20)){print $1,$2,$3,$4}else{if(overlap_merge>=5){print $1,$2,$3""substr($5,overlap_merge),$6""substr($6,overlap_merge);}else{print $0}}}}else print $0}' |\
+    $bin_dir/conda/bin/parallel --jobs ${thread} -k --linebuffer --halt soon,fail=1 -q -m --pipe \
+        awk 'length($3)>80{if($5!=NULL && length($5)>80){lengths=length($3)+length($5);if((lengths%3)==0){$4="NNNNNN"}else {if((lengths%3)==2){$4="NNNNNNN"}else{if((lengths%3)==1){$4="NNNNNNNN"}}};$6=""}else{$4=""};print $1"\t"$3""$4""$5}' \
+        > Merge/${i}.readsMergedOne.tab
+    ###### pre cluster for unique sequence
+    awk '{a[$2]=a[$2]+1}END{for(i in a){if(a[i]>1){print a[i],i}}}' Merge/${i}.readsMergedOne.tab |\
+    awk -v name=$i '{$1=name"_"FNR";size="$1";";print ">"$1"\n"$2}' > Merge/${i}.merged.fasta
+    $bin_dir/conda/bin/vsearch \
+        --cluster_size Merge/${i}.merged.fasta --strand both --threads ${thread} --id 0.98  \
+        --sizein --sizeout --fasta_width 0 --consout Merge/${i}.consensus.fasta \
+        --centroids ./${i}.unique.fasta \
+        >>${i}.runlog 2>&1
+    sed '2~2s/n/N/g' -i ./${i}.unique.fasta
+    awk '/^>/{gsub(">","",$0);name=$0;next;}{count=name;gsub(/.*;size=/,"",count);print name"\t"$0"\t"count}' ./${i}.unique.fasta > ./${i}.unique.count
+    rm -f Merge/*.readsAndPairs.tab
+    gzip -f *.paired.R[12].fastq Merge/*.fasta Merge/*.fastq Merge/*.tab &
+}
+
+function BCR_Annotation_Blat()
+{
+    i=$1
+    echo -e "\n          Annotation Sequence with Blat  ... \n"
+    echo -e "                            $i"
+    if [ -f IGblast/${i}.unique.fasta ]&&[ ! -f ./${i}.unique.fasta ];then mv -f IGblast/${i}.unique.{fasta,count} ./ ;fi
+    ### blat
+    $bin_dir/conda/bin/blat $database_dir/imgtrefseq.human.fa ./${i}.unique.fasta ./${i}.unique.blast -out=blast8 -minIdentity=90 
+    echo -e "/data/home/wanglei/miniconda3/envs/R-4.0/bin/blat $database_dir/imgtrefseq.human.fa ./${i}.unique.fasta ./${i}.unique.blast -out=blast8 -minIdentity=90" >> ${i}.runlog
+    ### igblastn
+    export IGDATA=$bin_dir/ncbi-igblast-1.17.1
+    if [ "$clone_type" == "BCR" ];then
+        ######BCR igblastn
+        $bin_dir/ncbi-igblast-1.17.1/bin/igblastn \
+            -germline_db_V $igblastn_db/imgt_human_ig_v -germline_db_D $igblastn_db/imgt_human_ig_d -germline_db_J $igblastn_db/imgt_human_ig_j -auxiliary_data $bin_dir/ncbi-igblast-1.17.1/optional_file/human_gl.aux -domain_system imgt -ig_seqtype Ig -organism human -show_translation -num_threads ${thread} -outfmt '7 qseqid sseqid pident length mismatch gaps qstart qend sstart send evalue bitscore' -query ./${i}.unique.fasta -out ./${i}.unique.BCR.igblastn.out \
+            >> ${i}.runlog 2>&1
+        echo -e "Seq_ID\tTop_V_gene_match\tTop_D_gene match\tTop_J_gene_match\tChain_type\tstop_codon\tV-J_frame\tProductive\tStrand\tV_Frame_shift" > ./${i}.unique.BCR.igblastn.filtered
+        cat ./${i}.unique.BCR.igblastn.out |\
+            awk '$0~/^# Query: /{name=$0;gsub(/^# Query: /,"",name);next}$0~/^# V-\(D\)-J rearrangement/{getline;if(NF<9){OFS="\t";$2="N/A\t"$2};print name"\t"$0;name=""}' \
+            >> ./${i}.unique.BCR.igblastn.filtered
+        cat ./${i}.unique.BCR.igblastn.out |\
+            awk '$0~/^# Query: /{OFS="\t";name=$0;gsub(/^# Query: /,"",name);gsub(/;.*/,"",name);next}$0~/^# Alignment summary/{for(i=1;i<=10;i++){getline;if($0!=NULL){print name,$0}else{break}};name=""}' \
+            > ./${i}.unique.BCR.align.summary
+    elif [ "$clone_type" == "TCR" ];then
+        ######TCR igblastn
+        $bin_dir/ncbi-igblast-1.17.1/bin/igblastn \
+            -germline_db_V $igblastn_db/imgt_human_tcr_v -germline_db_D $igblastn_db/imgt_human_tcr_d -germline_db_J $igblastn_db/imgt_human_tcr_j -auxiliary_data $bin_dir/ncbi-igblast-1.17.1/optional_file/human_gl.aux -domain_system imgt -ig_seqtype TCR -organism human -show_translation -num_threads ${thread} -outfmt '7 qseqid sseqid pident length mismatch gaps qstart qend sstart send evalue bitscore' -query ./${i}.unique.fasta -out ./${i}.unique.TCR.igblastn.out \
+            >> ${i}.runlog 2>&1
+        echo -e "Seq_ID\tTop_V_gene_match\tTop_D_gene_match\tTop_J_gene_match\tChain_type\tstop_codon\tV-J_frame\tProductive\tStrand\tV_Frame_shift" > ./${i}.unique.TCR.igblastn.filtered
+        cat ./${i}.unique.TCR.igblastn.out |\
+            awk '$0~/^# Query: /{name=$0;gsub(/^# Query: /,"",name);next}$0~/^# V-\(D\)-J rearrangement/{getline;if(NF<9){OFS="\t";$2="N/A\t"$2};print name"\t"$0;name=""}' \
+            >> ./${i}.unique.TCR.igblastn.filtered
+        cat ./${i}.unique.TCR.igblastn.out |\
+            awk '$0~/^# Query: /{OFS="\t";name=$0;gsub(/^# Query: /,"",name);gsub(/;.*/,"",name);next}$0~/^# Alignment summary/{for(i=1;i<=10;i++){getline;if($0!=NULL){print name,$0}else{break}};name=""}' \
+            > ./${i}.unique.TCR.align.summary
+    fi
+    if [ `cut -f1 ${i}.unique.blast|sort|uniq -d|wc -l` -lt 1 ];then 
+        echo -e "\n          ***     There are no blast result in your input files"'!'"\n" && exit ;fi 
+    mkdir -p IGblast/vdj_filtered
+    if [ -d IGblast/vdj_filtered ];then 
+        rm -r IGblast/vdj_filtered ;fi ; 
+    mkdir -p IGblast/vdj_filtered ; rm -f ${i}.*.Statistics
+    cut -f1 ${i}.unique.blast|sort|uniq -d|sed 's/;size=/_size=/g'|\
+        xargs -i -P ${thread} bash -c " MRDBlastStatistics ${i} {} "
+    Find_Univector_Blastn $i
+    title="Read_No\tSequences\tSeq_Len\tCount\tV_Gene\tJ_Gene\tVJ_Gene\tstop_codon\tV-J_frame\tProductive\tUnivector"
+    for n in `ls ${i}.*.Statistics --color=never`;do
+        cat ${n}|sort -k 4nr -t $'\t'|\
+        awk -F "\t" 'FNR==NR{v[$1]=$2;j[$1]=$4;arry[$1]=$6"\t"$7"\t"$8}FNR<NR{OFS="\t";if(arry[$1]!=NULL){$5=v[$1];$6=j[$1];print $0,arry[$1]}else{print $0,"N/A","N/A","N/A"}}' \
+        <(cat ./${i}.*.igblastn.filtered|awk '!a[$1]++') - |\
+        awk 'BEGIN{FS=OFS="\t"}FNR==NR{id[$1]=$2} \
+            FNR<NR{seqid=$1;gsub(/;.*/,"",seqid);if(id[seqid]~/No hits found/){$NF=$NF"\t""No hit"}else{$NF=$NF"\t""Found"};print $0}'  \
+            <( awk 'BEGIN{FS=OFS="\t"} \
+            $0~/^Query= /{name=$0;getline;while($0!=NULL){name=name$0;getline;};gsub(/^Query= /,"",name);gsub(/;.*/,"",name);next} \
+            $0~/No hits found/{while($0!=NULL){print name,$0;getline};name="";next} \
+            $0~/^Sequences producing/{getline;while($0==NULL){getline};gsub(/\.?+ +[0-9\. ]+$/,"",$0);print name,$0;name=""}' IGblast/${i}.unique.univector.blastout |awk 'a[$0]++' ) - |\
+        sed "1s/^/$title\n/"|awk '!a[$1]++'|\
+        > ${n}.sorted.xls;
+        sed "1s/^/$title\n/" -i ${n} ;
+        echo -e "\n          ***     ${n}.sorted.xls Completed\n"
+    done
+    mv -f *Statistics *sorted.xls *.unique.* IGblast
+    sed -i 's/\//|/g' IGblast/*
+
+}
+#Igblastn注释BCR信息
+function BCR_Annotation_Igblastn()
+{
+    i=$1
+    echo -e "\n          Annotation Sequence with IGblastn  ... \n"
+    echo -e "                            $i"
+    export IGDATA=$bin_dir/ncbi-igblast-1.17.1
+    if [ -f IGblast/${i}.unique.fasta ]&&[ ! -f ./${i}.unique.fasta ];then mv -f IGblast/${i}.unique.{fasta,count} ./ ;fi
+    if [ "$clone_type" == "BCR" ];then
+        ######BCR igblastn
+        $bin_dir/ncbi-igblast-1.17.1/bin/igblastn \
+            -germline_db_V $igblastn_db/imgt_human_ig_v \
+            -germline_db_D $igblastn_db/imgt_human_ig_d \
+            -germline_db_J $igblastn_db/imgt_human_ig_j \
+            -auxiliary_data $bin_dir/ncbi-igblast-1.17.1/optional_file/human_gl.aux \
+            -domain_system imgt -ig_seqtype Ig -organism human \
+            -show_translation -num_threads ${thread} $evalues \
+            -outfmt '7 qseqid sseqid pident length mismatch gaps qstart qend sstart send evalue bitscore' \
+            -min_V_length 40 -min_J_length 9 \
+            -query ./${i}.unique.fasta \
+            -out ./${i}.unique.BCR.igblastn.out \
+            >> ${i}.runlog 2>&1
+        sed -i '/^[VDJ]\t/s/ //g' ./${i}.unique.BCR.igblastn.out
+        echo -e "Seq_ID\tTop_V_gene_match\tTop_D_gene_match\tTop_J_gene_match\tChain_type\tstop_codon\tV-J_frame\tProductive\tStrand\tV_Frame_shift" > ./${i}.unique.BCR.igblastn.filtered
+        cat ./${i}.unique.BCR.igblastn.out |\
+            awk 'BEGIN{FS=OFS="\t"}$0~/^# Query: /{name=$0;gsub(/^# Query: /,"",name);next}$0~/^# V-\(D\)-J rearrangement/{getline;if(NF<9){ $2="N/A\t"$2};print name"\t"$0;name=""}' \
+            >> ./${i}.unique.BCR.igblastn.filtered
+        cat ./${i}.unique.BCR.igblastn.out |\
+            awk -v e=$evalue 'BEGIN{FS=OFS="\t"}$1=="V"||$1=="D"||($1=="J"&&$12<=e){ $14=$1;$1=NULL;gsub(/^reversed\|/,"",$2);print $0}'|sed 's/^\t//g' \
+            > ./${i}.unique.blast
+        cat ./${i}.unique.BCR.igblastn.out |\
+            awk 'BEGIN{FS=OFS="\t"}$0~/^# Query: /{ name=$0;gsub(/^# Query: /,"",name);gsub(/;.*/,"",name);next}$0~/^# Alignment summary/{for(i=1;i<=10;i++){getline;if($0!=NULL){print name,$0}else{break}};name=""}' \
+            > ./${i}.unique.BCR.align.summary
+    
+    elif [ "$clone_type" == "TCR" ];then
+        ######TCR igblastn
+        $bin_dir/ncbi-igblast-1.17.1/bin/igblastn \
+            -germline_db_V $igblastn_db/imgt_human_tcr_v \
+            -germline_db_D $igblastn_db/imgt_human_tcr_d \
+            -germline_db_J $igblastn_db/imgt_human_tcr_j \
+            -auxiliary_data $bin_dir/ncbi-igblast-1.17.1/optional_file/human_gl.aux \
+            -domain_system imgt -ig_seqtype TCR -organism human \
+            -show_translation -num_threads ${thread} $evalues \
+            -outfmt '7 qseqid sseqid pident length mismatch gaps qstart qend sstart send evalue bitscore' \
+            -query ./${i}.unique.fasta \
+            -min_V_length 40 -min_J_length 9 \
+            -out ./${i}.unique.TCR.igblastn.out \
+            >> ${i}.runlog 2>&1
+        sed -i '/^[VDJ]\t/s/ //g' ./${i}.unique.TCR.igblastn.out
+        echo -e "Seq_ID\tTop_V_gene_match\tTop_D_gene_match\tTop_J_gene_match\tChain_type\tstop_codon\tV-J_frame\tProductive\tStrand\tV_Frame_shift" > ./${i}.unique.TCR.igblastn.filtered
+        cat ./${i}.unique.TCR.igblastn.out |\
+            awk 'BEGIN{FS=OFS="\t"}$0~/^# Query: /{name=$0;gsub(/^# Query: /,"",name);next}$0~/^# V-\(D\)-J rearrangement/{getline;if(NF<9){$2="N/A\t"$2};print name"\t"$0;name=""}' \
+            >> ./${i}.unique.TCR.igblastn.filtered
+        cat ./${i}.unique.TCR.igblastn.out |\
+            awk -v e=$evalue 'BEGIN{FS=OFS="\t"}$1=="V"||$1=="D"||($1=="J"&&$12<=e){ $14=$1;$1=NULL;gsub(/^reversed\|/,"",$2);print $0}'|sed 's/^\t//g' \
+            > ./${i}.unique.blast
+        cat ./${i}.unique.TCR.igblastn.out |\
+            awk 'BEGIN{FS=OFS="\t"}$0~/^# Query: /{ name=$0;gsub(/^# Query: /,"",name);gsub(/;.*/,"",name);next}$0~/^# Alignment summary/{for(i=1;i<=10;i++){getline;if($0!=NULL){print name,$0}else{break}};name=""}' \
+            > ./${i}.unique.TCR.align.summary
+    fi
+    
+    ######integrated blast result
+    if [ `cut -f1 ${i}.unique.blast|sort|uniq -d|wc -l` -lt 1 ];then 
+        echo -e "\n          ***     There are no blast result in your input files"'!'"\n" && exit ;fi 
+    
+    mkdir -p IGblast/vdj_filtered
+    if [ -d IGblast/vdj_filtered ];then rm -rf IGblast/vdj_filtered ;fi ; 
+    mkdir -p IGblast/vdj_filtered ; rm -f ${i}.*.Statistics
+    cut -f1 ${i}.unique.blast|sort|uniq -d|sed 's/;size=/_size=/g'|\
+        xargs -i -r -P ${thread} bash -c " MRDBlastStatistics ${i} {} "
+    sed -i 's/\tIGKJ0\*KDE\t/\tKDE\t/g;s/_IGKJ0\*KDE[^a-zA-Z]\?/_KDE/g' *.Statistics
+    Find_Univector_Blastn $i 
+    
+    title="Read_No\tSequences\tSeq_Len\tCount\tV_Gene\tJ_Gene\tVJ_Gene\tstop_codon\tV-J_frame\tProductive\tUnivector"
+    for n in `ls ${i}*.Statistics --color=never`;do
+        cat ${n}|sort -k 4nr -t $'\t'|\
+        awk 'BEGIN{FS=OFS="\t"}FNR==NR{v[$1]=$2;j[$1]=$4;arry[$1]=$6"\t"$7"\t"$8}\
+             FNR<NR{if(arry[$1]!=NULL){$5=v[$1];$6=j[$1];print $0,arry[$1]}\
+                    else{print $0,"N/A","N/A","N/A"} }' \
+             <(cat ./${i}.unique.*.igblastn.filtered|awk '!a[$1]++') - |\
+        awk 'BEGIN{FS=OFS="\t"}FNR==NR{if($1!=NULL){id[$1]=$2}} \
+             FNR<NR{seqid=$1;gsub(/;.*/,"",seqid);\
+             if(id[seqid]==NULL){$NF=$NF"\t""No-hit"}else{$NF=$NF"\t""Found"};print $0}'  \
+             <( awk 'BEGIN{FS=OFS="\t"}FNR>1{gsub(/;.*/,"",$1);if($1!=NULL){a[$1]=$2}}END{for(i in a){print i,a[i]}}'  ./${i}.unique.univector.blastout ) - |\
+        sed "1s/^/$title\n/"|awk '!a[$1]++' \
+        > ${n}.sorted.xls;
+        sed "1s/^/$title\n/" -i ${n} ;
+        echo -e "\n          ***     ${n}.sorted.xls Completed\n"
+    done
+    mv -f *Statistics *sorted.xls *.unique.* IGblast
+    sed -i 's/\//|/g' IGblast/*unique.blast IGblast/*Statistics.sorted.xls IGblast/*.Statistics
+}
+
+#将VDJ序列比对到NCBI的UniVec数据库，可识别载体污染的序列
+function Find_Univector_Blastn()
+{
+    i="$1"
+    awk 'BEGIN{FS=OFS="\t"}$0!~/^Read_No/{print ">"$1"\n"$2}' ${i}.*.Statistics | \
+        sed '/^>$/d;/^$/d' \
+        > ./${i}.unique.align.univector   #提取id及序列
+    echo "qseqid sseqid pident length mismatch gapopen qstart qend sstart send evalue bitscore"|\
+        sed 's/ /\t/g' > ./${i}.unique.univector.blastout
+    $bin_dir/conda/bin/blastn  \
+        -task blastn -reward 1 -penalty -5 -gapopen 3 \
+        -gapextend 3 -dust yes -soft_masking true \
+        -evalue 700 -searchsp 1750000000000 \
+        -num_threads ${thread} -outfmt 6 \
+        -db $database_dir/UniVec.fasta.db \
+        -query ./${i}.unique.align.univector \
+        >> ./${i}.unique.univector.blastout   #用Blastn各参数比对
+    rm -f ./${i}.unique.align.univector
+    
+}
+#注释，先blat再igblastn
+function BCR_Annotation_Blast()
+{
+    i="$1"
+    
+    if [ "$annotation" == "blat" ];then
+        BCR_Annotation_Blat $i 
+    elif [ "$annotation" == "igblastn" ] ;then
+        BCR_Annotation_Igblastn $i 
+    fi
+}
+function BCR_Represent_Seq()
+{
+    i=$1
+    echo -e "\n          Alignment Sequence with Mafft  ... \n"
+    echo -e "                            $i"
+    for type in IGHD IGH IGL IGK TRA TRB TRD TRG ;do
+    {
+        if [ `cat IGblast/${i}.${type}.Statistics.sorted.xls|wc -l` -le 2 ];then continue ; fi  > /dev/null 2>&1
+        if [ -d Align/${type} ] ;then rm -rf Align/${type} ;fi
+        mkdir -p Align/${type} ;
+        stop=1;
+        cat IGblast/${i}.${type}.Statistics.sorted.xls|awk 'BEGIN{FS=OFS="\t"}{gsub(/[\*,\/\|]/,"_",$5);gsub(/[\*,\/\|]/,"_",$6);gsub(/[\*,\/\|]/,"_",$7);print $0}' |awk 'BEGIN{FS=OFS="\t"}{print $0,$5"__"$6}' > IGblast/${i}.${type}.Statistics.copy
+        for h in `awk '$1!~/^Read_No/{print $NF}' IGblast/${i}.${type}.Statistics.copy|sort|uniq|grep -v -e "V_Gene" `;do
+            while(($stop)) ;do
+            if [[ `jobs |grep -e "&" |wc -l` -lt ${thread} ]];then
+                {
+                grep $'\t'"$h$" IGblast/${i}.${type}.Statistics.copy | \
+                    cut -f1,2|sed 's/^/>/g;s/\t/\n/g' \
+                    > Align/${type}/"${type}.${h}.fa" ;
+                if [ `cat Align/${type}/"${type}.${h}.fa"|wc -l` -gt 400 ] ;then 
+                    alignment='--auto'; else alignment='--localpair'; fi ;
+                $bin_dir/conda/bin/mafft \
+                    --quiet --thread -1 --maxiterate 1000 ${alignment} Align/${type}/"${type}.${h}.fa" \
+                    > Align/${type}/"${type}.${h}.align" ;
+               $bin_dir/conda/bin/seqkit seq \
+                    Align/${type}/"${type}.${h}.align" --upper-case -w 0 --quiet \
+                    -o Align/${type}/"${type}.${h}.aligned" ;
+                TrimAlignedSeqs  Align/${type}/"${type}.${h}.aligned" ;
+                if [ -f Align/${type}/"${type}.${h}.align" ];then \rm -f Align/${type}/"${type}.${h}.align" ;fi
+                $bin_dir/conda/bin/vsearch \
+                    --cluster_size Align/${type}/"${type}.${h}.aligned.trimed.split.fa" --quiet --qmask none \
+                    --threads 2 --id 0.97 --strand both --sizein --sizeout --fasta_width 0 --quiet \
+                    --uc Align/${type}/"${type}.${h}.rep_seqs.uc" --centroids Align/${type}/"${type}.${h}.rep_seqs.fna" ;
+                }&
+                stop=0;
+            else stop=1;sleep 0.1s;
+            fi; 
+            done
+            stop=1;
+        done
+        
+        wait
+        \rm -fr IGblast/${i}.${type}.Statistics.copy
+        
+        cat Align/${type}/${type}.*.rep_seqs.fna |\
+            awk 'BEGIN{FS=OFS="\t"}$1~/^>/{name=$0;next;}{count=name;gsub(/.*=/,"",count);gsub(";","",count);gsub(/;.*/,"",name);gsub(/^>/,"",name);print name"\t"$0"\t"length($0)"\t"count}' \
+            > Align/${i}.${type}.aligned.trimed.bylen
+        head -1 IGblast/${i}.${type}.Statistics.sorted.xls |\
+            sed '1s/$/\trelation_abunance/' \
+            > ${i}.${type}.aligned.trimed.Statistics.xls
+        sed '/^Read_No\t/d' IGblast/${i}.${type}.Statistics.sorted.xls|\
+            awk 'BEGIN{FS=OFS="\t"}FNR==NR{gsub(/;size.*/,"",$1);a[$1]=$2;b[$1]=$5;for(i=6;i<=NF;i++){b[$1]=b[$1]"\t"$i}}FNR<NR{OFS="\t";if(b[$1]!=NULL){$5=b[$1];$2=a[$1];$3=length(a[$1])};print $0}' - Align/${i}.${type}.aligned.trimed.bylen |\
+            awk  'BEGIN{FS=OFS="\t"}{sum+=$4;a[$1]=$0;b[$1]=$4}END{OFS="\t";for(key in a){prop=b[key]/sum;print a[key]"\t"prop;}}'|\
+            sort -k 4 -nr \
+            >> ${i}.${type}.aligned.trimed.Statistics.xls
+        cat ${i}.${type}.aligned.trimed.Statistics.xls |sed '/^Read_No/d'|\
+            awk 'BEGIN{FS=OFS="\t"}{count[$7]+=$4;sum+=$4}END{for(key in count){printf "%s\t%d\t%.5f%%\n" , key,count[key],100*count[key]/sum }}' |sort -k 2 -nr|sed '1s/^/VJ_Gene\tcount\tproportion\n/' \
+            > Align/${i}.${type}.aligned.trimed.byvdj
+        cat ${i}.${type}.aligned.trimed.Statistics.xls |sed '/^Read_No/d'|\
+            awk 'BEGIN{FS=OFS="\t"}{count[$3]+=$4;sum+=$4}END{for(key in count){printf "%d\t%d\t%.5f%%\n" , key,count[key],100*count[key]/sum }}' |sort -k 2 -nr|sed '1s/^/Seq_Len\tcount\tproportion\n/' \
+            > Align/${i}.${type}.aligned.trimed.bylen
+        Rscript $bin_dir/Rplot_line.R ${i}.${type}.aligned.trimed.Statistics.xls  >>${i}.runlog 2>&1
+    }
+    done
+    
+}
+function BCR_Report()
+{
+    sample=$1
+    echo -e "\n          Make BCR Report  ... \n"
+    echo -e "                            $sample"
+    type=`ls --color=never ${sample}*.aligned.trimed.Statistics.xls|sed "s/$sample.//g;s/.aligned.trimed.Statistics.xls//g"|sort|uniq`
+    for type in `echo ${type} ` ;do
+        if [ ! -f "${sample}.${type}.aligned.trimed.Statistics.xls" ];then
+            echo -e "\n          ***     Could not find avaliable *${type}*.Statistics.xls ! \n" ;continue ; fi;
+        title1='# Query: '
+        title2='# V-(D)-J rearrangement summary for query sequence'
+        header1="Top V gene match\tTop D gene match\tTop J gene match\tChain type\tstop codon\tV-J frame\tProductive\tStrand\tV Frame shift"
+        title3='# Alignment summary between query and top germline V gene hit:'
+        header2="V region\tfrom\tto\tlength\tmatches\tmismatches\tgaps\tpercent identity"
+        if [ `cat ${sample}.${type}.*trimed.Statistics.xls|awk -F "\t" 'FNR>1&&$NF>=0.05{print $0}'|wc -l` -ge 1 ];then
+            cat ${sample}.${type}.aligned.trimed.Statistics.xls |\
+            awk -F "\t" 'FNR>1&&$NF>=0.05&&FNR==NR{gsub(/;size.*/,"",$1);arry1[$1]=$4;arry2[$1]=$NF}FNR<NR{gsub(/;size.*/,"",$1);if(arry2[$1]!=NULL){OFS ="\t";print $0,arry1[$1],arry2[$1]}}' - <(cat IGblast/${sample}.*.igblastn.filtered) |awk -v title1="$title1" -v header1="$header1" -v title2="$title2" -v header2="$header2" -v title3="$title3" 'BEGIN{FS=OFS="\t"}FNR==NR{seqs=$1;count[seqs]=$(NF-1);rate[seqs]=$NF;$1=$NF=$(NF-1)=NULL;arry[seqs]=$0}FNR<NR{if(arry[$1]!=NULL){seqid=$1;prop=rate[seqid]*100;$1=NULL;if(!b[seqid]){print title1""seqid,count[seqs],prop" %\n"title2"\n",header1"\n"arry[seqid]"\n"title3"\n"header2"\n"$0}else{print $0};b[seqid]=b[seqid]+1}}' - <(cat IGblast/${sample}.*.align.summary) | sed 's/^\t//g;s/\t\+$//g;s/^#/\n#/g' | sed '1d' \
+            > ${sample}.${type}.aligned.trimed.report ;
+            
+        else echo '          ***     No Significant Clonetype Rearrangement Was Detected.' > ${sample}.${type}.aligned.trimed.report ;
+        fi
+    done
+    
+}
+function Fastq_BCR_QC()
+{
+    sampleid=$1
+    echo -e "\n          Integrate QC Information  ... \n"
+    echo -e "                            $sampleid"
+    i="fastp.json"
+    if [ ! -f ./fastp.json ];then echo -e "\nCould not find avaliable fastp.json report ! \n" && exit ; fi;
+    
+    #QC
+    sample_dir=$(dirname $i)
+    total_reads=`cat $i|grep -F '"before_filtering"' -A 8|sed -n '2p' |sed 's/.*\:/,/g' |cut -f2 -d',' `
+    total_bases=`cat $i|grep -F '"before_filtering"' -A 8|sed -n '3p' |sed 's/.*\:/,/g' |cut -f2 -d',' `
+    clean_reads=`cat $i|grep -F '"after_filtering"' -A 8|sed -n '2p' |sed 's/.*\:/,/g' |cut -f2 -d',' `
+    clean_bases=`cat $i|grep -F '"after_filtering"' -A 8|sed -n '3p' |sed 's/.*\:/,/g' |cut -f2 -d',' `
+    q20_bases=`cat $i |grep -F '"after_filtering"' -A 8|sed -n '4p' |sed 's/.*\:/,/g' |cut -f2 -d',' `
+    q30_bases=`cat $i |grep -F '"after_filtering"' -A 8|sed -n '5p' |sed 's/.*\:/,/g' |cut -f2 -d',' `
+    q20_rate=`cat $i |grep -F '"after_filtering"' -A 8 |sed -n '6p'|sed 's/.*\:/,/g'|cut -f2 -d','|awk '{printf("%.2f%%",$0*100)}' `
+    q30_rate=`cat $i |grep -F '"after_filtering"' -A 8 |sed -n '7p'|sed 's/.*\:/,/g'|cut -f2 -d','|awk '{printf("%.2f%%",$0*100)}' `
+    read1_mean_length=`cat $i |grep -F '"after_filtering"' -A 8 |sed -n '8p' |sed 's/.*\:/,/g' |cut -f2 -d',' `
+    read2_mean_length=`cat $i |grep -F '"after_filtering"' -A 8 |sed -n '9p' |sed 's/.*\:/,/g' |cut -f2 -d',' `
+    duplication=`cat $i |grep -F '"duplication"' -A 8 |sed -n '2p' |sed 's/.*\:/,/g'|cut -f2 -d','|awk '{printf("%.2f%%",$0*100)}' `
+    adapter_trimmed_reads=`cat $i |grep -F '"adapter_trimmed_reads"' -A 8 |sed -n '1p' |sed 's/.*\:/,/g' |cut -f2 -d','|sed 's/ //g' `
+    #Merge
+    total_Pairs=`cat $sample_dir/Merge/*.log  |sed -n '2p' |sed 's/ \+/ /g;'|cut -f2 -d' ' `
+    Merged_Pairs=`cat $sample_dir/Merge/*.log |sed -n '3p' |sed 's/ \+/ /g;'|cut -f2 -d' ' `
+    Merged_rate=`cat $sample_dir/Merge/*.log  |sed -n '3p' |sed 's/[)(]//g;s/ \+/ /g;'|cut -f4 -d' ' `
+    Not_Merged_Pairs=`cat $sample_dir/Merge/*.log |sed -n '4p' |sed 's/ \+/ /g;'|cut -f2 -d' ' `
+    Not_Merged_rate=`cat $sample_dir/Merge/*.log  |sed -n '4p' |sed 's/[)(]//g;s/ \+/ /g;'|cut -f5 -d' ' `
+    Mean_fragment_length=`cat $sample_dir/Merge/*.log|grep "Statistics of merged reads" -A 1 |sed -n '2p' |sed 's/[)(]//g;s/ \+/ /g;'|cut -f2 -d' ' `
+    #Blast
+    filter_reads=`cat ${sample_dir}/IGblast/${sampleid}.unique.count|cut -f1|sort|uniq|sed 's/.*=//g'|awk '{sum=sum+$1}END{print sum}'`
+    blast_reads=`cat ${sample_dir}/IGblast/${sampleid}.unique.blast|cut -f1|sort|uniq|sed 's/.*=//g'|awk '{sum=sum+$1}END{print sum}'`
+    VJpairs_reads=`cat ${sample_dir}/IGblast/${sampleid}.*Statistics.sorted.xls|awk '{sum=sum+$4}END{print sum}'`
+    VJpairs_rate=`echo $VJpairs_reads|awk -v total=$filter_reads '{printf("%.2f%%",$1/total*100)}'`
+    
+    if [ "$clone_type" == "BCR" ];then
+        for type in IGL IGK IGH IGHD ;do
+            if [ -f ${sample_dir}/IGblast/${sampleid}.${type}.Statistics.sorted.xls ];then
+                reads=`cat ${sample_dir}/IGblast/${sampleid}.${type}.Statistics.sorted.xls|awk '$1!~/^Read_No/{sum=sum+$4}END{print sum}'`
+            else reads=0 ; fi
+            clone_types=$type"\t"$clone_types
+            clone_reads=$reads"\t"$clone_reads
+        done
+        clone_types=`echo -e "$clone_types"|cut -f1-4`
+        clone_reads=`echo -e "$clone_reads"|cut -f1-4`
+    elif [ "$clone_type" == "TCR" ];then
+        for type in TRG TRD TRB TRA ;do
+            if [ -f ${sample_dir}/IGblast/${sampleid}.${type}.Statistics.sorted.xls ];then
+                reads=`cat ${sample_dir}/IGblast/${sampleid}.${type}.Statistics.sorted.xls|awk '$1!~/^Read_No/{sum=sum+$4}END{print sum}'`
+            else reads=0 ; fi
+            clone_types=$type"\t"$clone_types
+            clone_reads=$reads"\t"$clone_reads
+        done
+        clone_types=`echo -e "$clone_types"|cut -f1-4`
+        clone_reads=`echo -e "$clone_reads"|cut -f1-4`
+    fi
+    
+    #Write file
+    echo -e SampleID"\t"'total_reads(R1+R2)'"\t"'total_bases(R1+R2)'"\t"'clean_reads(R1+R2)'"\t"'clean_bases(R1+R2)'"\t"q20_bases"\t"q30_bases"\t"q20_rate"\t"q30_rate"\t"read1_mean_length"\t"read2_mean_length"\t"duplication"\t"adapter_trimmed_reads"\t"total_Pairs"\t"Merged_Pairs"\t"Merged_rate"\t"Not_Merged_Pairs"\t"Not_Merged_rate"\t"Mean_fragment_length"\t"filtered_reads"\t"blast_reads"\t""${clone_types}""\t"VJpairs_reads"\t"VJpairs_rate > ${sample_dir}/${sampleid}.Analysis.QC.xls
+    echo -e $sampleid"\t"$total_reads"\t"$total_bases"\t"$clean_reads"\t"$clean_bases"\t"$q20_bases"\t"$q30_bases"\t"$q20_rate"\t"$q30_rate"\t"$read1_mean_length"\t"$read2_mean_length"\t"$duplication"\t"$adapter_trimmed_reads"\t"$total_Pairs"\t"$Merged_Pairs"\t"$Merged_rate"\t"$Not_Merged_Pairs"\t"$Not_Merged_rate"\t"$Mean_fragment_length"\t"$filter_reads"\t"$blast_reads"\t""${clone_reads}""\t"$VJpairs_reads"\t"$VJpairs_rate >> ${sample_dir}/${sampleid}.Analysis.QC.xls
+    
+}
+
+stop=1;samples="";
+if [ -n "$config_file" ];then samples=`cat $config_file|cut -f1 -d','|sort|uniq` ;
+else samples=`ls $input_dir/*.gz --color=never|grep "R1.fastq"|sed 's#.*/##g;s#[_.]R1.fastq.gz$##g'`;fi
+for m in `echo $samples`;do
+{   while(($stop)) ;do
+        if [[ `jobs |grep -e "&" |wc -l` -lt 10 ]];then
+        {
+        m=$(basename $m)
+        mkdir -p $m
+        cd $m
+         BCR_MRD_Merge $m
+         BCR_Annotation_Blast $m
+         BCR_Represent_Seq $m
+         BCR_Report $m
+         Fastq_BCR_QC $m
+        cd ../
+        }&
+        stop=0;
+        else stop=1;sleep 2s;
+        fi; 
+    done
+    stop=1;
+    sleep 0.1s ; }
+done
+
+wait
+
+if [ "`ls */* |grep "Analysis.QC.xls"|wc -l`" -ge 1 ];then
+    cat */*Analysis.QC.xls |awk '!arry[$0]++' > Analysis3.0.QC.xls
+    echo -e "
+###################################################################################################
+##################################      Analysis Finish      ######################################
+###################################################################################################
+"
+    touch $analysis_dir/Analysis3.0.ok
+fi
+
+echo "Analysis Work finished at" `date` >> ${input}/${input}.runlog
+
