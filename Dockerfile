@@ -18,7 +18,7 @@ RUN apt-get update \
 && apt-get install -y less curl apt-utils vim wget gcc-7 g++-7 make cmake git unzip dos2unix libncurses5 gzip \
 
 # lib
-&& apt-get install -y zlib1g-dev libjpeg-dev libncurses5-dev libbz2-dev liblzma-dev libcurl4-gnutls-dev \
+&& apt-get install -y zlib1g-dev libjpeg-dev libncurses5-dev libbz2-dev liblzma-dev libcurl4-gnutls-dev libssl-dev \
  
 # python3 perl java r-base
 && apt-get install -y python3 python3-dev python3-pip python perl openjdk-8-jdk r-base r-base-dev
@@ -49,7 +49,7 @@ RUN wget ftp://ftp.ncbi.nih.gov/blast/executables/igblast/release/1.17.1/ncbi-ig
 # copy esssential files
 WORKDIR $software
 RUN Rscript -e "install.packages(c('ggplot2','tidyverse'))"
-RUN git clone https://github.com/yqyuhao/BCR_v3.git && cd BCR_v3 && cp -f Rplot_line.R BCR_analysis_v3 $software/bin && cp -Rf database $software/
+RUN git clone https://github.com/yqyuhao/BCR_v3.git && cd BCR_v3 && cp -f Rplot_line.R BCR_analysis_v3.0 $software/bin && cp -Rf database $software/
 RUN cd .. && rm -Rf BCR_v3
 
 # chown root:root
