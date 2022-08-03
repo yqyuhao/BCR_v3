@@ -49,7 +49,7 @@ RUN wget ftp://ftp.ncbi.nih.gov/blast/executables/igblast/release/1.17.1/ncbi-ig
 
 # copy esssential files
 WORKDIR $software
-RUN git clone https://github.com/yqyuhao/BCR_v3.git && cd BCR_v3 && cp -f Rplot_line $software/bin && cp -Rf database $software/
+RUN git clone https://github.com/yqyuhao/BCR_v3.git && cd BCR_v3 && cp -f Rplot_line.R $software/bin && cp -Rf database $software/
 RUN rm -Rf BCR_v3
 
 # chown root:root
