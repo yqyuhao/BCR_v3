@@ -33,10 +33,9 @@ RUN mkdir -p /data $software/database $software/source $software/bin
 WORKDIR $software/source
 RUN wget https://repo.anaconda.com/miniconda/Miniconda3-py37_4.12.0-Linux-x86_64.sh -O $software/source/Miniconda3-py37_4.12.0-Linux-x86_64.sh \
 && sh $software/source/Miniconda3-py37_4.12.0-Linux-x86_64.sh -b -p $software/bin/conda-v4.12 \
-&& ln -s $software/source/conda-v4.12/bin/conda $software/bin/conda \
-&& $software/bin/conda config --add channels conda-forge \
-&& $software/bin/conda config --add channels r \
-&& $software/bin/conda config --add channels bioconda
+&& $software/source/conda-v4.12/bin/conda config --add channels conda-forge \
+&& $software/source/conda-v4.12/bin/conda config --add channels r \
+&& $software/source/conda-v4.12/bin/conda config --add channels bioconda
 
 # install cutadapt fastp flash megahit vsearch blat mafft seqkit blastn
 WORKDIR $software/source
