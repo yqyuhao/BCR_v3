@@ -49,7 +49,7 @@ RUN wget ftp://ftp.ncbi.nih.gov/blast/executables/igblast/release/1.17.1/ncbi-ig
 # copy esssential files
 WORKDIR $software
 RUN Rscript -e "install.packages(c('ggplot2','tidyverse'))"
-RUN git clone https://github.com/yqyuhao/BCR_v3.git && cd BCR_v3 && cp -f Rplot_line.R $software/bin && cp -Rf database $software/
+RUN git clone https://github.com/yqyuhao/BCR_v3.git && cd BCR_v3 && cp -f Rplot_line.R BCR_analysis_v3 $software/bin && cp -Rf database $software/
 RUN cd .. && rm -Rf BCR_v3
 
 # chown root:root
