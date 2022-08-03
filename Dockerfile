@@ -18,7 +18,7 @@ RUN apt-get update \
 && apt-get install -y less curl apt-utils vim wget gcc-7 g++-7 make cmake git unzip dos2unix libncurses5 gzip \
 
 # lib
-&& apt-get install -y zlib1g-dev libjpeg-dev libncurses5-dev libbz2-dev liblzma-dev libcurl4-gnutls-dev libssl-dev \
+&& apt-get install -y zlib1g-dev libjpeg-dev libncurses5-dev libbz2-dev liblzma-dev libcurl4-gnutls-dev libssl-dev libxml2-dev \
  
 # python3 perl java r-base
 && apt-get install -y python3 python3-dev python3-pip python perl openjdk-8-jdk r-base r-base-dev
