@@ -27,7 +27,7 @@ ENV software /yqyuhao
 
 # create software folder
 
-RUN mkdir -p /data $software/database $software/source $software/bin
+RUN mkdir -p /data /data/fastq /data/analysis $software/database $software/source $software/bin
 
 # conda v4.12
 WORKDIR $software/source
