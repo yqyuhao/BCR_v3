@@ -1,4 +1,4 @@
-#!/usr/bin/bash
+#!/bin/bash
 set +x
 ##########  script usage
 
@@ -22,7 +22,7 @@ cat << HELP
     -a  --annotation <string>         The annotation software: blat/igblastn ,if not, it defaults to igblastn;
 
   EXAMPLE: 
-    BCR_analysis_v3.0 -i fastq_directory -o output_directory
+    BCR_analysis_v3.0 -f configure.csv -i fastq_directory -o output_directory
 
 HELP
 exit 0 
