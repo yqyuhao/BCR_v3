@@ -59,4 +59,4 @@ RUN chown root:root -R $software/bin
 RUN chmod 644 $software/bin/BCR_analysis_v3.0
 
 # mkdir fastq directory and analysis directory
-WORKDIR /data/analysis
+WORKDIR /data/RightonAuto/analysis
